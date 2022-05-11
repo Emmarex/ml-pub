@@ -6,39 +6,32 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"io/ioutil"
+	"os"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
-
 )
 
 // checkCmd represents the check command
 var checkCmd = &cobra.Command{
-	Use:   "check",
+	Use:     "check",
 	Aliases: []string{"validate"},
-	Short: "Validate mlpub Yaml file",
-	Long: `Validate mlpub Yaml file`,
+	Short:   "Validate mlpub Yaml file",
+	Long:    `Validate mlpub Yaml file`,
 	Run: func(cmd *cobra.Command, args []string) {
 		configFile, _ := cmd.Flags().GetString("config")
-		if _, err := os.Stat(configFile); os.IsNotExist(err){
-			fmt.Println("Config file does not exist")
+		if _, err := os.Stat(configFile); os.IsNotExist(err) {
+			fmt.Printf("\x1b[31;1m%s\x1b[0m\n", "Config file does not exist")
 			os.Exit(1)
 		}
 
 		yamlFile, err := ioutil.ReadFile(configFile)
-		if err != nil {
-			fmt.Println("Invalid config file")
-			os.Exit(1)
-		}
+		CheckIfError(err)
 		data := PubConfiguration{}
 
-     	unmarshalErr := yaml.Unmarshal(yamlFile, &data)
-		if unmarshalErr != nil {
-			fmt.Println("Invalid config file")
-			os.Exit(1)
-		}
+		err = yaml.Unmarshal(yamlFile, &data)
+		CheckIfError(err)
 
 		fmt.Println(data)
 	},

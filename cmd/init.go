@@ -9,26 +9,30 @@ import (
 	"fmt"
 	"os"
 
-
 	"github.com/spf13/cobra"
 
 	"github.com/manifoldco/promptui"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/go-git/go-git/v5"
 )
 
 // initCmd represents the init command
 var initCmd = &cobra.Command{
-	Use:   "init [path]",
+	Use:     "init [path]",
 	Aliases: []string{"initialize", "initialise", "create"},
-	Short: "Initialize a mlpub project",
-	Long: `Initialize a mlpub project`,
+	Short:   "Initialize a mlpub project",
+	Long:    `Initialize a mlpub project`,
 	Run: func(cmd *cobra.Command, args []string) {
 		var projectPath, projectName, modelPath, preProcessor, cloudService string
 		projectPath, err := os.Getwd()
-		
+
+		CheckIfError(err)
+
 		if len(args) > 0 {
 			if args[0] != "." {
+				CheckArgs("<c>")
 				projectPath = args[0]
 			}
 		}
@@ -36,6 +40,7 @@ var initCmd = &cobra.Command{
 		if _, err := os.Stat(projectPath); os.IsNotExist(err) {
 			// create directory
 			if err := os.Mkdir(projectPath, 0754); err != nil {
+				fmt.Printf("\x1b[31;1m%s\x1b[0m\n", fmt.Sprintf("error: %s", err))
 				fmt.Println(err)
 				os.Exit(1)
 			}
@@ -46,28 +51,22 @@ var initCmd = &cobra.Command{
 				Label: "Project Name",
 			}
 			result, err := prompt.Run()
-			if err != nil {
-				fmt.Println("You have to enter a project name.")
-				return
-			}
+			CheckIfError(err)
 			projectName = result
 		}
 
 		if modelPath == "" {
 			prompt := promptui.Prompt{
-				Label:   "Model Path",
+				Label: "Model Path",
 				Validate: func(input string) error {
 					if _, err := os.Stat(input); os.IsNotExist(err) {
-						return errors.New("Invalid Path")
+						return errors.New("invalid model path")
 					}
 					return nil
 				},
 			}
 			result, err := prompt.Run()
-			if err != nil {
-				fmt.Println("You have to enter your model file path.")
-				return
-			}
+			CheckIfError(err)
 			modelPath = result
 		}
 
@@ -77,27 +76,31 @@ var initCmd = &cobra.Command{
 				Items: cloudServiceProviders,
 			}
 			_, result, err := prompt.Run()
-			if err != nil {
-				fmt.Println("You have to select a Cloud service to deploy your project")
-				return
-			}
+			CheckIfError(err)
 			cloudService = result
 		}
 
+		// Clone the given repository to the given directory
+		Info("git clone %s %s --recursive", "https://github.com/Emmarex/emmarex", projectPath)
+
+		_, err = git.PlainClone(projectPath, false, &git.CloneOptions{
+			URL:               "https://github.com/Emmarex/emmarex",
+			RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
+		})
+
+		CheckIfError(err)
+
 		if preProcessor == "" {
 			preProcessor = fmt.Sprintf("%s/%s", projectPath, "pre_processor.py")
-			fmt.Println(preProcessor)
 			os.WriteFile(preProcessor, preProcessorTemplate(), 0754)
 		}
 
-		data := PubConfiguration{projectName,modelPath,preProcessor,cloudService}
+		data := PubConfiguration{projectName, modelPath, preProcessor, cloudService}
 		configByte, err := yaml.Marshal(&data)
-        if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-        }
-		os.WriteFile(fmt.Sprintf("%s/%s", projectPath, "mlpub.yaml") , configByte, 0754)
-		fmt.Println(fmt.Sprintf("Project Initialized successfully at %s", projectPath))
+		CheckIfError(err)
+
+		os.WriteFile(fmt.Sprintf("%s/%s", projectPath, "mlpub.yaml"), configByte, 0754)
+		Info("Project Initialized successfully at %s", projectPath)
 	},
 }
 

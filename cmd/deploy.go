@@ -14,7 +14,7 @@ import (
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Deploy your Machine learning model",
-	Long: `Deploy your Machine learning model`,
+	Long:  `Deploy your Machine learning model`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("deploy called")
 	},
