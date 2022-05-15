@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,6 +17,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/go-git/go-git/v5"
+
+	cp "github.com/otiai10/copy"
 )
 
 // initCmd represents the init command
@@ -80,20 +83,27 @@ var initCmd = &cobra.Command{
 			cloudService = result
 		}
 
+		gitUrl := fmt.Sprintf("https://github.com/Emmarex/mlpub-template-%s", strings.ToLower(cloudService))
+
 		// Clone the given repository to the given directory
-		Info("git clone %s %s --recursive", "https://github.com/Emmarex/emmarex", projectPath)
+		Info("git clone %s %s --recursive", gitUrl, projectPath)
 
 		_, err = git.PlainClone(projectPath, false, &git.CloneOptions{
-			URL:               "https://github.com/Emmarex/emmarex",
+			URL:               gitUrl,
 			RecurseSubmodules: git.DefaultSubmoduleRecursionDepth,
 		})
 
 		CheckIfError(err)
 
+		os.RemoveAll(fmt.Sprintf("%s/%s", projectPath, ".git"))
+
 		if preProcessor == "" {
 			preProcessor = fmt.Sprintf("%s/%s", projectPath, "pre_processor.py")
 			os.WriteFile(preProcessor, preProcessorTemplate(), 0754)
 		}
+
+		err = cp.Copy(modelPath, fmt.Sprintf("%s/%s", projectPath, "model"))
+		CheckIfError(err)
 
 		data := PubConfiguration{projectName, modelPath, preProcessor, cloudService}
 		configByte, err := yaml.Marshal(&data)
