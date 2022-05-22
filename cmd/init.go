@@ -19,6 +19,8 @@ import (
 	"github.com/go-git/go-git/v5"
 
 	cp "github.com/otiai10/copy"
+
+	"golang.org/x/exp/slices"
 )
 
 // initCmd represents the init command
@@ -28,7 +30,12 @@ var initCmd = &cobra.Command{
 	Short:   "Initialize a mlpub project",
 	Long:    `Initialize a mlpub project`,
 	Run: func(cmd *cobra.Command, args []string) {
-		var projectPath, projectName, modelPath, preProcessor, cloudService string
+		// get flag values
+		projectName, _ := cmd.Flags().GetString("project_name")
+		modelPath, _ := cmd.Flags().GetString("model_path")
+		preProcessor, _ := cmd.Flags().GetString("pre_processor")
+		cloudService, _ := cmd.Flags().GetString("cloud_service")
+
 		projectPath, err := os.Getwd()
 
 		CheckIfError(err)
@@ -71,6 +78,9 @@ var initCmd = &cobra.Command{
 			result, err := prompt.Run()
 			CheckIfError(err)
 			modelPath = result
+		} else {
+			_, err := os.Stat(modelPath)
+			CheckIfError(err)
 		}
 
 		if cloudService == "" {
@@ -81,6 +91,29 @@ var initCmd = &cobra.Command{
 			_, result, err := prompt.Run()
 			CheckIfError(err)
 			cloudService = result
+		} else {
+			if !slices.Contains(cloudServiceProviders, cloudService) {
+				Warning("%s is not a valid Cloud service provider option", cloudService)
+			}
+		}
+
+		if preProcessor == "" {
+			prompt := promptui.Prompt{
+				Label:   "Pre processor file path",
+				Default: "./pre_processor.py",
+				Validate: func(input string) error {
+					if _, err := os.Stat(input); os.IsNotExist(err) {
+						return errors.New("invalid pre processor path")
+					}
+					return nil
+				},
+			}
+			result, err := prompt.Run()
+			CheckIfError(err)
+			preProcessor = result
+		} else {
+			_, err := os.Stat(preProcessor)
+			CheckIfError(err)
 		}
 
 		gitUrl := fmt.Sprintf("https://github.com/Emmarex/mlpub-template-%s", strings.ToLower(cloudService))
@@ -97,9 +130,12 @@ var initCmd = &cobra.Command{
 
 		os.RemoveAll(fmt.Sprintf("%s/%s", projectPath, ".git"))
 
-		if preProcessor == "" {
-			preProcessor = fmt.Sprintf("%s/%s", projectPath, "pre_processor.py")
-			os.WriteFile(preProcessor, preProcessorTemplate(), 0754)
+		os.RemoveAll(fmt.Sprintf("%s/%s", projectPath, "LICENSE"))
+
+		if preProcessor != "" {
+			os.RemoveAll(fmt.Sprintf("%s/%s", projectPath, "pre_processor.py"))
+			err = cp.Copy(preProcessor, fmt.Sprintf("%s/%s", projectPath, "pre_processor.py"))
+			CheckIfError(err)
 		}
 
 		err = cp.Copy(modelPath, fmt.Sprintf("%s/%s", projectPath, "model"))
@@ -111,6 +147,9 @@ var initCmd = &cobra.Command{
 
 		os.WriteFile(fmt.Sprintf("%s/%s", projectPath, "mlpub.yaml"), configByte, 0754)
 		Info("Project Initialized successfully at %s", projectPath)
+
+		Info("\n\n\t cd %s", projectPath)
+		Info("\n\t mlpub deploy\n")
 	},
 }
 
@@ -127,6 +166,6 @@ func init() {
 	// is called directly, e.g.:
 	initCmd.Flags().StringP("project_name", "n", "", "Project name")
 	initCmd.Flags().StringP("model_path", "m", "", "Model Path")
-	initCmd.Flags().StringP("pre_processor", "p", "", "Python preprocessor file")
+	initCmd.Flags().StringP("pre_processor", "p", "", "Python pre-processor file path")
 	initCmd.Flags().StringP("cloud_service", "c", "", "Cloud service to host project")
 }

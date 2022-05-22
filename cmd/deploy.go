@@ -6,17 +6,50 @@ package cmd
 
 import (
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // deployCmd represents the deploy command
 var deployCmd = &cobra.Command{
-	Use:   "deploy",
-	Short: "Deploy your Machine learning model",
-	Long:  `Deploy your Machine learning model`,
+	Use:     "deploy [path]",
+	Aliases: []string{"push"},
+	Short:   "Deploy your Machine learning model",
+	Long:    `Deploy your Machine learning model`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("deploy called")
+		projectPath, err := os.Getwd()
+
+		CheckIfError(err)
+
+		if len(args) > 0 {
+			if args[0] != "." {
+				CheckArgs("<c>")
+				projectPath = args[0]
+			}
+		}
+
+		configFile := filepath.Join(projectPath, "mlpub.yaml")
+
+		if _, err := os.Stat(configFile); os.IsNotExist(err) {
+			fmt.Printf("\x1b[31;1m%s\x1b[0m\n", "Config file does not exist")
+			os.Exit(1)
+		}
+
+		yamlFile, err := ioutil.ReadFile(configFile)
+		CheckIfError(err)
+		data := PubConfiguration{}
+
+		err = yaml.Unmarshal(yamlFile, &data)
+		CheckIfError(err)
+
+		Info("Building docker image ... \n")
+		dockerize(projectPath, data.Name)
+
+		pushImageToECR(data.Name, "eu-central-1")
 	},
 }
 

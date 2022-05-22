@@ -1,35 +1,31 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"strings"
+
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/archive"
+	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/term"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ecr"
 )
 
-var cloudServiceProviders = []string{"AWS", "Azure", "Google Cloud"}
+var cloudServiceProviders = []string{"AWS", "Google Cloud"}
 
 type PubConfiguration struct {
 	Name         string
 	ModelPath    string `yaml:"model_path"`
 	PreProcessor string `yaml:"pre_processor"`
 	CloudService string `yaml:"cloud_service"`
-}
-
-func preProcessorTemplate() []byte {
-	return []byte(`
-"""
-This is a sample python pre processing file for your model
-"""
-from typing import Tuple, Any
-	
-def main(data) -> Tuple[bool, Any]:
-	"""
-	do not change the name of this method
-	"""
-	# return the pre-processed version of your data here
-	return True, data
-	`)
 }
 
 func CheckArgs(arg ...string) {
@@ -54,4 +50,44 @@ func Info(format string, args ...interface{}) {
 
 func Warning(format string, args ...interface{}) {
 	fmt.Printf("\x1b[36;1m%s\x1b[0m\n", fmt.Sprintf(format, args...))
+}
+
+func dockerize(projectPath string, projectName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*360)
+	defer cancel()
+
+	tarFile, err := archive.TarWithOptions(projectPath, &archive.TarOptions{})
+	CheckIfError(err)
+
+	opts := types.ImageBuildOptions{
+		Dockerfile:     "Dockerfile",
+		Tags:           []string{projectName},
+		SuppressOutput: false,
+		Remove:         true,
+		ForceRemove:    true,
+		PullParent:     true,
+		NoCache:        false,
+	}
+
+	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	CheckIfError(err)
+
+	buildResponse, err := dockerClient.ImageBuild(ctx, tarFile, opts)
+	CheckIfError(err)
+
+	defer buildResponse.Body.Close()
+
+	termFd, isTerm := term.GetFdInfo(os.Stderr)
+	jsonmessage.DisplayJSONMessagesStream(buildResponse.Body, os.Stderr, termFd, isTerm, nil)
+}
+
+func pushImageToECR(projectName string, awsRegion string) {
+	awsSession := session.Must(session.NewSession())
+	ecrClient := ecr.New(awsSession, &aws.Config{Region: aws.String(awsRegion)})
+	result, err := ecrClient.PutImage(&ecr.PutImageInput{
+		RepositoryName: aws.String(projectName),
+		ImageManifest:  aws.String(""),
+	})
+	CheckIfError(err)
+	fmt.Println(result)
 }
