@@ -20,12 +20,13 @@ import (
 )
 
 type AWSExtras struct {
-	Region     string   `yaml:"region"`
-	Layers     []string `yaml:",flow"`
-	S3Bucket   string   `yaml:"s3_bucket"`
-	Runtime    string   `yaml:"runtime"`
-	MemorySize int64    `yaml:"memory_size"`
-	TimeOut    int64    `yaml:"time_out"`
+	Region     string    `yaml:"region"`
+	Layers     []*string `yaml:",flow"`
+	S3Bucket   string    `yaml:"s3_bucket"`
+	Runtime    string    `yaml:"runtime"`
+	MemorySize int64     `yaml:"memory_size"`
+	TimeOut    int64     `yaml:"time_out"`
+	LambdaRole string    `yaml:"lambda_role"`
 }
 
 type PubConfiguration struct {
@@ -40,11 +41,12 @@ var cloudServiceProviders = []string{"AWS", "Google Cloud"}
 
 var defaultAWSConfig = AWSExtras{
 	Region:     "us-west-1",
-	Layers:     []string{},
+	Layers:     []*string{},
 	S3Bucket:   "ml-pub-bucket",
 	Runtime:    "python3.9",
 	MemorySize: 256,
 	TimeOut:    300,
+	LambdaRole: "",
 }
 
 func CheckArgs(arg ...string) {
@@ -167,13 +169,11 @@ func createAWSLambdaFunction(zipFileName string, pubConfig PubConfiguration) {
 		FunctionName: aws.String(fmt.Sprintf("%s-function", pubConfig.Name)),
 		Handler:      aws.String("app.handler"),
 		MemorySize:   aws.Int64(pubConfig.AWSExtras.MemorySize),
+		Layers:       pubConfig.AWSExtras.Layers,
 		Publish:      aws.Bool(true),
-		// Role:         aws.String("arn:aws:iam::123456789012:role/lambda-role"),
-		Runtime: aws.String(pubConfig.AWSExtras.Runtime),
-		// Tags: map[string]*string{
-		// 	"DEPARTMENT": aws.String("Assets"),
-		// },
-		Timeout: aws.Int64(pubConfig.AWSExtras.TimeOut),
+		Role:         aws.String(pubConfig.AWSExtras.LambdaRole),
+		Runtime:      aws.String(pubConfig.AWSExtras.Runtime),
+		Timeout:      aws.Int64(pubConfig.AWSExtras.TimeOut),
 	}
 
 	result, err := svc.CreateFunction(input)
