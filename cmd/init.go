@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -43,7 +44,7 @@ var initCmd = &cobra.Command{
 		if len(args) > 0 {
 			if args[0] != "." {
 				CheckArgs("<c>")
-				projectPath = args[0]
+				projectPath = filepath.Clean(args[0])
 			}
 		}
 
@@ -119,7 +120,7 @@ var initCmd = &cobra.Command{
 		gitUrl := fmt.Sprintf("https://github.com/Emmarex/mlpub-template-%s", strings.ToLower(cloudService))
 
 		// Clone the given repository to the given directory
-		Info("git clone %s %s --recursive", gitUrl, projectPath)
+		Info("cloning %s (process may take a moment) ...", gitUrl)
 
 		_, err = git.PlainClone(projectPath, false, &git.CloneOptions{
 			URL:               gitUrl,

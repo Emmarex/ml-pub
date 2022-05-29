@@ -1,22 +1,22 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
+	"io"
+	"math/rand"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 
+	"archive/zip"
 	"strings"
-
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/archive"
-	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/moby/term"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ecr"
+	"github.com/aws/aws-sdk-go/service/lambda"
+	"github.com/aws/aws-sdk-go/service/s3"
+	cp "github.com/otiai10/copy"
 )
 
 var cloudServiceProviders = []string{"AWS", "Google Cloud"}
@@ -52,42 +52,120 @@ func Warning(format string, args ...interface{}) {
 	fmt.Printf("\x1b[36;1m%s\x1b[0m\n", fmt.Sprintf(format, args...))
 }
 
-func dockerize(projectPath string, projectName string) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*360)
-	defer cancel()
-
-	tarFile, err := archive.TarWithOptions(projectPath, &archive.TarOptions{})
-	CheckIfError(err)
-
-	opts := types.ImageBuildOptions{
-		Dockerfile:     "Dockerfile",
-		Tags:           []string{projectName},
-		SuppressOutput: false,
-		Remove:         true,
-		ForceRemove:    true,
-		PullParent:     true,
-		NoCache:        false,
+func randString(length int) string {
+	var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	randomString := make([]byte, length)
+	for item := range randomString {
+		randomString[item] = charset[seededRand.Intn(len(charset))]
 	}
-
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	CheckIfError(err)
-
-	buildResponse, err := dockerClient.ImageBuild(ctx, tarFile, opts)
-	CheckIfError(err)
-
-	defer buildResponse.Body.Close()
-
-	termFd, isTerm := term.GetFdInfo(os.Stderr)
-	jsonmessage.DisplayJSONMessagesStream(buildResponse.Body, os.Stderr, termFd, isTerm, nil)
+	return string(randomString)
 }
 
-func pushImageToECR(projectName string, awsRegion string) {
-	awsSession := session.Must(session.NewSession())
-	ecrClient := ecr.New(awsSession, &aws.Config{Region: aws.String(awsRegion)})
-	result, err := ecrClient.PutImage(&ecr.PutImageInput{
-		RepositoryName: aws.String(projectName),
-		ImageManifest:  aws.String(""),
+func zipFiles(deployPath string) string {
+	zipFilePath := randString(50) + ".zip"
+
+	newZipFile, err := os.Create(zipFilePath)
+	CheckIfError(err)
+	defer newZipFile.Close()
+
+	zipWriter := zip.NewWriter(newZipFile)
+
+	filepath.Walk(deployPath, func(filePath string, info os.FileInfo, err error) error {
+		CheckIfError(err)
+		if info.IsDir() {
+			return nil
+		}
+		relPath := strings.TrimPrefix(filePath, deployPath+"/")
+		zipFile, err := zipWriter.Create(relPath)
+		CheckIfError(err)
+		fsFile, err := os.Open(filePath)
+		CheckIfError(err)
+		_, err = io.Copy(zipFile, fsFile)
+		CheckIfError(err)
+		return nil
 	})
+	zipWriter.Close()
+	return zipFilePath
+}
+
+func CheckPip() string {
+	pipPath, err := exec.LookPath("pip3")
+	if err != nil {
+		pipPath, err := exec.LookPath("pip")
+		CheckIfError(err)
+		return pipPath
+	}
+	return pipPath
+}
+
+func InstallProjectPackages(projectPath string, deployPath string) {
+	err := cp.Copy(projectPath, deployPath, cp.Options{
+		Skip: func(src string) (bool, error) {
+			return strings.Contains(src, ".mlpub"), nil
+		},
+	})
+	CheckIfError(err)
+	pipPath := CheckPip()
+	Info("Installing requirements ... \n")
+	err = exec.Command(pipPath, "install", "-r", fmt.Sprintf("%s/requirements.txt", deployPath), "-t", deployPath).Run()
+	CheckIfError(err)
+}
+
+func createAWSbucket(bucketName string, awsRegion string) {
+	awsSession := session.Must(session.NewSession())
+	svc := s3.New(awsSession, &aws.Config{Region: aws.String(awsRegion)})
+	input := &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	}
+	_, err := svc.CreateBucket(input)
+	CheckIfError(err)
+}
+
+func uploadZipFile(bucketName string, awsRegion string, zipFileName string) {
+	awsSession := session.Must(session.NewSession())
+	svc := s3.New(awsSession, &aws.Config{Region: aws.String(awsRegion)})
+	input := &s3.PutObjectInput{
+		Body:   aws.ReadSeekCloser(strings.NewReader(zipFileName)),
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(zipFileName),
+	}
+	result, err := svc.PutObject(input)
+	CheckIfError(err)
+	fmt.Println(result)
+}
+
+func createAWSLambdaFunction(awsRegion string, bucketName string, zipFileName string, projectData PubConfiguration) {
+	awsSession := session.Must(session.NewSession())
+	svc := lambda.New(awsSession, &aws.Config{Region: aws.String(awsRegion)})
+	input := &lambda.CreateFunctionInput{
+		Code: &lambda.FunctionCode{
+			S3Bucket: aws.String(bucketName),
+			S3Key:    aws.String(zipFileName),
+		},
+		Description: aws.String("Lambda function created by mlpub"),
+		// Environment: &lambda.Environment{
+		// 	Variables: map[string]*string{
+		// 		"BUCKET": aws.String("my-bucket-1xpuxmplzrlbh"),
+		// 		"PREFIX": aws.String("inbound"),
+		// 	},
+		// },
+		FunctionName: aws.String(fmt.Sprintf("%s-function", projectData.Name)),
+		Handler:      aws.String("app.handler"),
+		MemorySize:   aws.Int64(256),
+		Publish:      aws.Bool(true),
+		// Role:         aws.String("arn:aws:iam::123456789012:role/lambda-role"),
+		Runtime: aws.String("nodejs12.x"),
+		// Tags: map[string]*string{
+		// 	"DEPARTMENT": aws.String("Assets"),
+		// },
+		Timeout: aws.Int64(15),
+		TracingConfig: &lambda.TracingConfig{
+			Mode: aws.String("Active"),
+		},
+	}
+
+	result, err := svc.CreateFunction(input)
 	CheckIfError(err)
 	fmt.Println(result)
 }

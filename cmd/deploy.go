@@ -28,8 +28,15 @@ var deployCmd = &cobra.Command{
 		if len(args) > 0 {
 			if args[0] != "." {
 				CheckArgs("<c>")
-				projectPath = args[0]
+				projectPath = filepath.Clean(args[0])
 			}
+		}
+
+		deployDirectory := filepath.Clean(fmt.Sprintf("%s/%s", projectPath, ".mlpub"))
+		if _, err := os.Stat(deployDirectory); os.IsNotExist(err) {
+			// create directory
+			err = os.Mkdir(deployDirectory, 0754)
+			CheckIfError(err)
 		}
 
 		configFile := filepath.Join(projectPath, "mlpub.yaml")
@@ -46,10 +53,13 @@ var deployCmd = &cobra.Command{
 		err = yaml.Unmarshal(yamlFile, &data)
 		CheckIfError(err)
 
-		Info("Building docker image ... \n")
-		dockerize(projectPath, data.Name)
+		Info("Building application ... \n")
+		InstallProjectPackages(projectPath, deployDirectory)
 
-		pushImageToECR(data.Name, "eu-central-1")
+		zipFileName := zipFiles(deployDirectory)
+
+		// createAWSbucket(fmt.Sprintf("%s-mlpub-bucket1", data.Name), "eu-central-1")
+		uploadZipFile(fmt.Sprintf("%s-mlpub-bucket1", data.Name), "eu-central-1", zipFileName)
 	},
 }
 
