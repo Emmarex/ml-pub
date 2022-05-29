@@ -142,7 +142,14 @@ var initCmd = &cobra.Command{
 		err = cp.Copy(modelPath, fmt.Sprintf("%s/%s", projectPath, "model"))
 		CheckIfError(err)
 
-		data := PubConfiguration{projectName, modelPath, preProcessor, cloudService}
+		data := PubConfiguration{projectName, modelPath, preProcessor, cloudService, new(AWSExtras)}
+
+		if cloudService == "AWS" {
+			data.AWSExtras = &defaultAWSConfig
+		}
+
+		fmt.Println(data)
+
 		configByte, err := yaml.Marshal(&data)
 		CheckIfError(err)
 

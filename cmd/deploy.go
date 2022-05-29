@@ -48,9 +48,9 @@ var deployCmd = &cobra.Command{
 
 		yamlFile, err := ioutil.ReadFile(configFile)
 		CheckIfError(err)
-		data := PubConfiguration{}
+		pubConfig := PubConfiguration{}
 
-		err = yaml.Unmarshal(yamlFile, &data)
+		err = yaml.Unmarshal(yamlFile, &pubConfig)
 		CheckIfError(err)
 
 		Info("Building application ... \n")
@@ -58,8 +58,16 @@ var deployCmd = &cobra.Command{
 
 		zipFileName := zipFiles(deployDirectory)
 
-		// createAWSbucket(fmt.Sprintf("%s-mlpub-bucket1", data.Name), "eu-central-1")
-		uploadZipFile(fmt.Sprintf("%s-mlpub-bucket1", data.Name), "eu-central-1", zipFileName)
+		if pubConfig.CloudService == "AWS" && pubConfig.AWSExtras.S3Bucket == "" {
+			bucketName := createAWSbucket(fmt.Sprintf("%s-mlpub-bucket", pubConfig.Name), pubConfig.AWSExtras.Region)
+			pubConfig.AWSExtras.S3Bucket = bucketName
+		}
+
+		Info("Uploading zip file ... \n")
+		uploadZipFile(pubConfig, zipFileName)
+
+		Info("Creating lambda function ... \n")
+		createAWSLambdaFunction(zipFileName, pubConfig)
 	},
 }
 

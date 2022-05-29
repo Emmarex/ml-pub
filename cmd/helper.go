@@ -19,13 +19,32 @@ import (
 	cp "github.com/otiai10/copy"
 )
 
-var cloudServiceProviders = []string{"AWS", "Google Cloud"}
+type AWSExtras struct {
+	Region     string   `yaml:"region"`
+	Layers     []string `yaml:",flow"`
+	S3Bucket   string   `yaml:"s3_bucket"`
+	Runtime    string   `yaml:"runtime"`
+	MemorySize int64    `yaml:"memory_size"`
+	TimeOut    int64    `yaml:"time_out"`
+}
 
 type PubConfiguration struct {
 	Name         string
-	ModelPath    string `yaml:"model_path"`
-	PreProcessor string `yaml:"pre_processor"`
-	CloudService string `yaml:"cloud_service"`
+	ModelPath    string     `yaml:"model_path"`
+	PreProcessor string     `yaml:"pre_processor"`
+	CloudService string     `yaml:"cloud_service"`
+	AWSExtras    *AWSExtras `yaml:"extras,omitempty"`
+}
+
+var cloudServiceProviders = []string{"AWS", "Google Cloud"}
+
+var defaultAWSConfig = AWSExtras{
+	Region:     "us-west-1",
+	Layers:     []string{},
+	S3Bucket:   "ml-pub-bucket",
+	Runtime:    "python3.9",
+	MemorySize: 256,
+	TimeOut:    300,
 }
 
 func CheckArgs(arg ...string) {
@@ -112,7 +131,7 @@ func InstallProjectPackages(projectPath string, deployPath string) {
 	CheckIfError(err)
 }
 
-func createAWSbucket(bucketName string, awsRegion string) {
+func createAWSbucket(bucketName string, awsRegion string) string {
 	awsSession := session.Must(session.NewSession())
 	svc := s3.New(awsSession, &aws.Config{Region: aws.String(awsRegion)})
 	input := &s3.CreateBucketInput{
@@ -120,14 +139,15 @@ func createAWSbucket(bucketName string, awsRegion string) {
 	}
 	_, err := svc.CreateBucket(input)
 	CheckIfError(err)
+	return bucketName
 }
 
-func uploadZipFile(bucketName string, awsRegion string, zipFileName string) {
+func uploadZipFile(pubConfig PubConfiguration, zipFileName string) {
 	awsSession := session.Must(session.NewSession())
-	svc := s3.New(awsSession, &aws.Config{Region: aws.String(awsRegion)})
+	svc := s3.New(awsSession, &aws.Config{Region: aws.String(pubConfig.AWSExtras.Region)})
 	input := &s3.PutObjectInput{
 		Body:   aws.ReadSeekCloser(strings.NewReader(zipFileName)),
-		Bucket: aws.String(bucketName),
+		Bucket: aws.String(pubConfig.AWSExtras.S3Bucket),
 		Key:    aws.String(zipFileName),
 	}
 	result, err := svc.PutObject(input)
@@ -135,34 +155,25 @@ func uploadZipFile(bucketName string, awsRegion string, zipFileName string) {
 	fmt.Println(result)
 }
 
-func createAWSLambdaFunction(awsRegion string, bucketName string, zipFileName string, projectData PubConfiguration) {
+func createAWSLambdaFunction(zipFileName string, pubConfig PubConfiguration) {
 	awsSession := session.Must(session.NewSession())
-	svc := lambda.New(awsSession, &aws.Config{Region: aws.String(awsRegion)})
+	svc := lambda.New(awsSession, &aws.Config{Region: aws.String(pubConfig.AWSExtras.Region)})
 	input := &lambda.CreateFunctionInput{
 		Code: &lambda.FunctionCode{
-			S3Bucket: aws.String(bucketName),
+			S3Bucket: aws.String(pubConfig.AWSExtras.S3Bucket),
 			S3Key:    aws.String(zipFileName),
 		},
-		Description: aws.String("Lambda function created by mlpub"),
-		// Environment: &lambda.Environment{
-		// 	Variables: map[string]*string{
-		// 		"BUCKET": aws.String("my-bucket-1xpuxmplzrlbh"),
-		// 		"PREFIX": aws.String("inbound"),
-		// 	},
-		// },
-		FunctionName: aws.String(fmt.Sprintf("%s-function", projectData.Name)),
+		Description:  aws.String("Lambda function created by mlpub"),
+		FunctionName: aws.String(fmt.Sprintf("%s-function", pubConfig.Name)),
 		Handler:      aws.String("app.handler"),
-		MemorySize:   aws.Int64(256),
+		MemorySize:   aws.Int64(pubConfig.AWSExtras.MemorySize),
 		Publish:      aws.Bool(true),
 		// Role:         aws.String("arn:aws:iam::123456789012:role/lambda-role"),
-		Runtime: aws.String("nodejs12.x"),
+		Runtime: aws.String(pubConfig.AWSExtras.Runtime),
 		// Tags: map[string]*string{
 		// 	"DEPARTMENT": aws.String("Assets"),
 		// },
-		Timeout: aws.Int64(15),
-		TracingConfig: &lambda.TracingConfig{
-			Mode: aws.String("Active"),
-		},
+		Timeout: aws.Int64(pubConfig.AWSExtras.TimeOut),
 	}
 
 	result, err := svc.CreateFunction(input)
