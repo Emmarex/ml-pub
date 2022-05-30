@@ -48,25 +48,30 @@ var deployCmd = &cobra.Command{
 
 		yamlFile, err := ioutil.ReadFile(configFile)
 		CheckIfError(err)
+
 		pubConfig := PubConfiguration{}
 
 		err = yaml.Unmarshal(yamlFile, &pubConfig)
 		CheckIfError(err)
 
-		Info("Building application ... \n")
 		InstallProjectPackages(projectPath, deployDirectory)
 
 		zipFileName := zipFiles(deployDirectory)
 
 		if pubConfig.CloudService == "AWS" && pubConfig.AWSExtras.S3Bucket == "" {
-			bucketName := createAWSbucket(fmt.Sprintf("%s-mlpub-bucket", pubConfig.Name), pubConfig.AWSExtras.Region)
+			bucketName := createAWSbucket(pubConfig, zipFileName)
 			pubConfig.AWSExtras.S3Bucket = bucketName
+			createConfigFile(pubConfig, projectPath)
 		}
 
-		Info("Uploading zip file ... \n")
+		if pubConfig.CloudService == "AWS" && pubConfig.AWSExtras.LambdaRole == "" {
+			roleArn := createLambdaRole(pubConfig)
+			pubConfig.AWSExtras.LambdaRole = roleArn
+			createConfigFile(pubConfig, projectPath)
+		}
+
 		uploadZipFile(pubConfig, zipFileName)
 
-		Info("Creating lambda function ... \n")
 		createAWSLambdaFunction(zipFileName, pubConfig)
 	},
 }

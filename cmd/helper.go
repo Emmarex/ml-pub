@@ -14,9 +14,12 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/lambda"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	cp "github.com/otiai10/copy"
+	"gopkg.in/yaml.v3"
 )
 
 type AWSExtras struct {
@@ -42,12 +45,29 @@ var cloudServiceProviders = []string{"AWS", "Google Cloud"}
 var defaultAWSConfig = AWSExtras{
 	Region:     "us-west-1",
 	Layers:     []*string{},
-	S3Bucket:   "ml-pub-bucket",
+	S3Bucket:   "",
 	Runtime:    "python3.9",
 	MemorySize: 256,
 	TimeOut:    300,
 	LambdaRole: "",
 }
+
+var defaultLambdaPolicy = `{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "sts:AssumeRole"
+            ],
+            "Principal": {
+                "Service": [
+                    "lambda.amazonaws.com"
+                ]
+            }
+        }
+    ]
+}`
 
 func CheckArgs(arg ...string) {
 	if len(os.Args) < len(arg)+1 {
@@ -84,7 +104,7 @@ func randString(length int) string {
 }
 
 func zipFiles(deployPath string) string {
-	zipFilePath := randString(50) + ".zip"
+	zipFilePath := randString(25) + ".zip"
 
 	newZipFile, err := os.Create(zipFilePath)
 	CheckIfError(err)
@@ -110,6 +130,12 @@ func zipFiles(deployPath string) string {
 	return zipFilePath
 }
 
+func createConfigFile(pubConfig PubConfiguration, projectPath string) {
+	configByte, err := yaml.Marshal(&pubConfig)
+	CheckIfError(err)
+	os.WriteFile(fmt.Sprintf("%s/%s", projectPath, "mlpub.yaml"), configByte, 0754)
+}
+
 func CheckPip() string {
 	pipPath, err := exec.LookPath("pip3")
 	if err != nil {
@@ -121,6 +147,7 @@ func CheckPip() string {
 }
 
 func InstallProjectPackages(projectPath string, deployPath string) {
+	Info("Building application ... \n")
 	err := cp.Copy(projectPath, deployPath, cp.Options{
 		Skip: func(src string) (bool, error) {
 			return strings.Contains(src, ".mlpub"), nil
@@ -133,31 +160,51 @@ func InstallProjectPackages(projectPath string, deployPath string) {
 	CheckIfError(err)
 }
 
-func createAWSbucket(bucketName string, awsRegion string) string {
+func createAWSbucket(pubConfig PubConfiguration, zipFileName string) string {
+	bucketName := fmt.Sprintf("%s-mlpub-cli-managed-bucket", strings.ToLower(pubConfig.Name))
+	Info("Creating AWS Bucket (%s) ...", bucketName)
 	awsSession := session.Must(session.NewSession())
-	svc := s3.New(awsSession, &aws.Config{Region: aws.String(awsRegion)})
+	svc := s3.New(awsSession, &aws.Config{Region: aws.String(pubConfig.AWSExtras.Region)})
 	input := &s3.CreateBucketInput{
 		Bucket: aws.String(bucketName),
 	}
 	_, err := svc.CreateBucket(input)
+	os.RemoveAll(zipFileName)
 	CheckIfError(err)
 	return bucketName
 }
 
 func uploadZipFile(pubConfig PubConfiguration, zipFileName string) {
-	awsSession := session.Must(session.NewSession())
-	svc := s3.New(awsSession, &aws.Config{Region: aws.String(pubConfig.AWSExtras.Region)})
-	input := &s3.PutObjectInput{
-		Body:   aws.ReadSeekCloser(strings.NewReader(zipFileName)),
+	Info("Uploading zip file ... \n")
+	awsSession := session.Must(session.NewSession(&aws.Config{Region: aws.String(pubConfig.AWSExtras.Region)}))
+	uploader := s3manager.NewUploader(awsSession)
+	zipFile, err := os.Open(zipFileName)
+	CheckIfError(err)
+	_, err = uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(pubConfig.AWSExtras.S3Bucket),
 		Key:    aws.String(zipFileName),
-	}
-	result, err := svc.PutObject(input)
+		Body:   zipFile,
+	})
+	os.RemoveAll(zipFileName)
 	CheckIfError(err)
-	fmt.Println(result)
+}
+
+func createLambdaRole(pubConfig PubConfiguration) string {
+	Info("Creating lambda role ... \n")
+	awsSession := session.Must(session.NewSession())
+	svc := iam.New(awsSession, &aws.Config{Region: aws.String(pubConfig.AWSExtras.Region)})
+	input := &iam.CreateRoleInput{
+		AssumeRolePolicyDocument: aws.String(defaultLambdaPolicy),
+		Path:                     aws.String("/"),
+		RoleName:                 aws.String(fmt.Sprintf("%s-role-mlpub-cli-managed", strings.ToLower(pubConfig.Name))),
+	}
+	result, err := svc.CreateRole(input)
+	CheckIfError(err)
+	return string(*result.Role.Arn)
 }
 
 func createAWSLambdaFunction(zipFileName string, pubConfig PubConfiguration) {
+	Info("Creating lambda function ... \n")
 	awsSession := session.Must(session.NewSession())
 	svc := lambda.New(awsSession, &aws.Config{Region: aws.String(pubConfig.AWSExtras.Region)})
 	input := &lambda.CreateFunctionInput{
@@ -166,7 +213,7 @@ func createAWSLambdaFunction(zipFileName string, pubConfig PubConfiguration) {
 			S3Key:    aws.String(zipFileName),
 		},
 		Description:  aws.String("Lambda function created by mlpub"),
-		FunctionName: aws.String(fmt.Sprintf("%s-function", pubConfig.Name)),
+		FunctionName: aws.String(fmt.Sprintf("%s-function-%s", strings.ToLower(pubConfig.Name), randString(10))),
 		Handler:      aws.String("app.handler"),
 		MemorySize:   aws.Int64(pubConfig.AWSExtras.MemorySize),
 		Layers:       pubConfig.AWSExtras.Layers,
@@ -176,7 +223,6 @@ func createAWSLambdaFunction(zipFileName string, pubConfig PubConfiguration) {
 		Timeout:      aws.Int64(pubConfig.AWSExtras.TimeOut),
 	}
 
-	result, err := svc.CreateFunction(input)
+	_, err := svc.CreateFunction(input)
 	CheckIfError(err)
-	fmt.Println(result)
 }

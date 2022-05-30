@@ -15,8 +15,6 @@ import (
 
 	"github.com/manifoldco/promptui"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/go-git/go-git/v5"
 
 	cp "github.com/otiai10/copy"
@@ -98,21 +96,7 @@ var initCmd = &cobra.Command{
 			}
 		}
 
-		if preProcessor == "" {
-			prompt := promptui.Prompt{
-				Label:   "Pre processor file path",
-				Default: "./pre_processor.py",
-				Validate: func(input string) error {
-					if _, err := os.Stat(input); os.IsNotExist(err) {
-						return errors.New("invalid pre processor path")
-					}
-					return nil
-				},
-			}
-			result, err := prompt.Run()
-			CheckIfError(err)
-			preProcessor = result
-		} else {
+		if preProcessor != "" {
 			_, err := os.Stat(preProcessor)
 			CheckIfError(err)
 		}
@@ -137,10 +121,14 @@ var initCmd = &cobra.Command{
 			os.RemoveAll(fmt.Sprintf("%s/%s", projectPath, "pre_processor.py"))
 			err = cp.Copy(preProcessor, fmt.Sprintf("%s/%s", projectPath, "pre_processor.py"))
 			CheckIfError(err)
+		} else {
+			preProcessor = "pre_processor.py"
 		}
 
-		err = cp.Copy(modelPath, fmt.Sprintf("%s/%s", projectPath, "model"))
+		modelFileName := fmt.Sprintf("model%s", filepath.Ext(modelPath))
+		err = cp.Copy(modelPath, filepath.Join(projectPath, modelFileName))
 		CheckIfError(err)
+		modelPath = modelFileName
 
 		data := PubConfiguration{projectName, modelPath, preProcessor, cloudService, new(AWSExtras)}
 
@@ -148,12 +136,8 @@ var initCmd = &cobra.Command{
 			data.AWSExtras = &defaultAWSConfig
 		}
 
-		fmt.Println(data)
+		createConfigFile(data, projectPath)
 
-		configByte, err := yaml.Marshal(&data)
-		CheckIfError(err)
-
-		os.WriteFile(fmt.Sprintf("%s/%s", projectPath, "mlpub.yaml"), configByte, 0754)
 		Info("Project Initialized successfully at %s", projectPath)
 
 		Info("\n\n\t cd %s", projectPath)
