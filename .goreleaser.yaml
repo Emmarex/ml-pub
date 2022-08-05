@@ -52,7 +52,7 @@ brews:
     name: mlpub
     tap:
       owner: Emmarex
-      name: homebrew-tap
+      name: homebrew-ml-pub
       branch: main
     homepage: https://github.com/Emmarex/ml-pub
     license: 'Apache'
