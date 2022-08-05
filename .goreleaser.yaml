@@ -54,7 +54,6 @@ brews:
       owner: Emmarex
       name: homebrew-tap
       branch: main
-    folder: Formula
     homepage: https://github.com/Emmarex/ml-pub
     license: 'Apache'
     description: Deploy machine learning models with one command. ML Pub provides you with an easy way to deploy machine learning models easily.
