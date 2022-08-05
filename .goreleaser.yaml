@@ -46,3 +46,11 @@ changelog:
       - 'README'
       - Merge pull request
       - Merge branch
+
+brews:
+    - github:
+          owner: Emmarex
+          name: homebrew-mlpub
+      folder: Formula
+      homepage: https://github.com/Emmarex/ml-pub
+      description: Deploy machine learning models with one command. ML Pub provides you with an easy way to deploy machine learning models easily.
