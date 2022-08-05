@@ -10,4 +10,4 @@ MLPub helps you deploy machine learning models with a single command.
 
 ## License
 
-Cobra is released under the Apache 2.0 license. See [LICENSE](https://github.com/Emmarex/ml-pub/blob/main/LICENSE)
+Cobra is released under the Apache 2.0 license. See [LICENSE](https://github.com/Emmarex/mlpub/blob/main/LICENSE)
